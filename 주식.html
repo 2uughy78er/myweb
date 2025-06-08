@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>실시간 주식 거래 시뮬레이터</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Arial', sans-serif;
+      display: flex;
+      height: 100vh;
+    }
+    .sidebar {
+      width: 220px;
+      background-color: #2c3e50;
+      color: white;
+      padding: 20px;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
+    .stock-list button {
+      display: block;
+      width: 100%;
+      margin-bottom: 8px;
+      padding: 10px;
+      border: none;
+      background-color: #34495e;
+      color: white;
+      cursor: pointer;
+      text-align: left;
+      font-size: 14px;
+      border-radius: 4px;
+    }
+    .stock-list button:hover {
+      background-color: #1abc9c;
+    }
+    .chart-container {
+      flex-grow: 1;
+      padding: 40px;
+      background-color: #ecf0f1;
+      box-sizing: border-box;
+      overflow-x: auto;
+    }
+    canvas {
+      min-width: 1000px;
+    }
+    .controls {
+      margin-bottom: 20px;
+    }
+    .controls button,
+    .controls input {
+      padding: 10px;
+      margin-right: 10px;
+      font-size: 14px;
+    }
+    .info {
+      margin-top: 10px;
+      font-weight: bold;
+    }
+    .log-table {
+      margin-top: 20px;
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .log-table th,
+    .log-table td {
+      border: 1px solid #ccc;
+      padding: 6px;
+      text-align: center;
+      font-size: 14px;
+    }
+    .log-table th {
+      background-color: #ddd;
+    }
+    input[type='number'] {
+      width: 80px;
+    }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <h2>종목 선택 (주식)</h2>
+    <div class="stock-list" id="stockButtons"></div>
+  </div>
+
+  <div class="chart-container">
+    <h1 id="stock-title">초기투자</h1>
+    <div style="font-size: 18px; margin-bottom: 15px;">
+      현재 주가: <span id="currentPrice" style="font-weight: bold;">0</span>원
+    </div>
+
+    <div class="controls">
+      <input type="number" id="tradeAmount" value="1" min="1" />
+      <button onclick="buyStock()">🟢 매수</button>
+      <button onclick="sellStock()">🔴 매도</button>
+      <div class="info">
+        💰 자금: <span id="cash">50000</span>원 |
+        📦 보유 수량: <span id="shares">0</span>개<br />
+        📈 손익: <span id="profit" style="font-weight: bold;">0원 (0%)</span>
+      </div>
+    </div>
+
+    <canvas id="stockChart" width="1200" height="400"></canvas>
+
+    <h3>📋 거래 내역</h3>
+    <table class="log-table" id="tradeLog">
+      <thead>
+        <tr>
+          <th>시간</th>
+          <th>종목</th>
+          <th>구분</th>
+          <th>단가</th>
+          <th>수량</th>
+          <th>총액</th>
+          <th>손익</th>
+          <th>수익률</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script>
+    const ctx = document.getElementById('stockChart').getContext('2d');
+
+    // 15개 주식 종목 (1,000원대 초기투자 추가)
+    const stocks = [
+      '초기투자',
+      '삼성전자', '현대차', 'LG전자', '카카오', '네이버',
+      '셀트리온', 'POSCO', 'SK하이닉스', '기아', '한화솔루션',
+      'NAVER', '신한지주', 'KB금융', '삼성바이오로직스', '롯데케미칼'
+    ];
+
+    // 시작 가격 설정
+    const startPrices = {
+      '초기투자': 1000,
+      '삼성전자': 60000,
+      '현대차': 220000,
+      'LG전자': 130000,
+      '카카오': 70000,
+      '네이버': 300000,
+      '셀트리온': 250000,
+      'POSCO': 300000,
+      'SK하이닉스': 110000,
+      '기아': 85000,
+      '한화솔루션': 36000,
+      'NAVER': 300000,
+      '신한지주': 40000,
+      'KB금융': 47000,
+      '삼성바이오로직스': 850000,
+      '롯데케미칼': 300000
+    };
+
+    let currentStock = stocks[0];
+    let currentIndex = 50;
+
+    const maxDataLength = 50;
+
+    function generateInitialData(startPrice) {
+      let arr = [startPrice];
+      for (let i = 1; i < maxDataLength; i++) {
+        arr.push(getRandomPrice(arr[i - 1]));
+      }
+      return arr;
+    }
+
+    // 가격 변동폭 ±3%
+    function getRandomPrice(prevPrice) {
+      const changePercent = (Math.random() - 0.5) * 0.06; // -3% ~ +3%
+      let newPrice = prevPrice * (1 + changePercent);
+      if (newPrice < 1) newPrice = 1;
+      return Math.round(newPrice);
+    }
+
+    const stockData = {};
+    stocks.forEach(stock => {
+      stockData[stock] = generateInitialData(startPrices[stock]);
+    });
+
+    const userHoldings = {
+      cash: 50000,
+      shares: {},
+      avgBuyPrice: {}
+    };
+    stocks.forEach(s => {
+      userHoldings.shares[s] = 0;
+      userHoldings.avgBuyPrice[s] = null;
+    });
+
+    const labels = Array.from({ length: maxDataLength }, (_, i) => i.toString());
+
+    const data = {
+      labels: [...labels],
+      datasets: [{
+        label: currentStock,
+        borderColor: 'rgb(75, 192, 192)',
+        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+        data: [...stockData[currentStock]],
+        tension: 0.3
+      }]
+    };
+
+    const config = {
+      type: 'line',
+      data: data,
+      options: {
+        responsive: true,
+        animation: false,
+        scales: {
+          x: { title: { display: true, text: '시간' }},
+          y: { title: { display: true, text: '가격' }, beginAtZero: false }
+        }
+      }
+    };
+
+    const chart = new Chart(ctx, config);
+
+    const stockButtonsDiv = document.getElementById('stockButtons');
+    stocks.forEach(stock => {
+      const btn = document.createElement('button');
+      btn.textContent = stock;
+      btn.onclick = () => selectStock(stock);
+      stockButtonsDiv.appendChild(btn);
+    });
+
+    function selectStock(name) {
+      currentStock = name;
+      currentIndex = stockData[name].length;
+      document.getElementById('stock-title').innerText = name;
+
+      data.datasets[0].label = name;
+      data.datasets[0].data = stockData[name];
+      data.labels = Array.from({ length: stockData[name].length }, (_, i) => i.toString());
+
+      chart.update();
+      updateInfo();
+    }
+
+    function getCurrentPrice() {
+      const prices = stockData[currentStock];
+      return prices[prices.length - 1];
+    }
+
+    function buyStock() {
+      const price = getCurrentPrice();
+      const quantity = parseInt(document.getElementById('tradeAmount').value);
+      if (quantity <= 0) {
+        alert('1 이상 수량을 입력하세요.');
+        return;
+      }
+      const totalCost = price * quantity;
+
+      if (userHoldings.cash >= totalCost) {
+        let currentShares = userHoldings.shares[currentStock];
+        let currentAvg = userHoldings.avgBuyPrice[currentStock];
+        const newTotalShares = currentShares + quantity;
+
+        if (currentShares === 0) {
+          userHoldings.avgBuyPrice[currentStock] = price;
+        } else {
+          userHoldings.avgBuyPrice[currentStock] = (currentAvg * currentShares + price * quantity) / newTotalShares;
+        }
+
+        userHoldings.cash -= totalCost;
+        userHoldings.shares[currentStock] += quantity;
+        logTrade("매수", price, quantity, 0, "0%");
+        updateInfo();
+      } else {
+        alert("자금이 부족합니다.");
+      }
+    }
+
+    function sellStock() {
+      const quantity = parseInt(document.getElementById('tradeAmount').value);
+      if (quantity <= 0) {
+        alert('1 이상 수량을 입력하세요.');
+        return;
+      }
+      const owned = userHoldings.shares[currentStock];
+      if (owned >= quantity) {
+        const sellPrice = getCurrentPrice();
+        const buyPrice = userHoldings.avgBuyPrice[currentStock];
+        const profitPerShare = sellPrice - buyPrice;
+        const profitTotal = profitPerShare * quantity;
+        const profitRate = buyPrice === 0 ? 0 : ((profitPerShare / buyPrice) * 100).toFixed(2);
+
+        userHoldings.cash += sellPrice * quantity;
+        userHoldings.shares[currentStock] -= quantity;
+
+        if (userHoldings.shares[currentStock] === 0) {
+          userHoldings.avgBuyPrice[currentStock] = null;
+        }
+
+        logTrade("매도", sellPrice, quantity, profitTotal, profitRate + "%");
+        updateInfo();
+      } else {
+        alert("보유 수량이 부족합니다.");
+      }
+    }
+
+    setInterval(() => {
+      stocks.forEach(stock => {
+        const prices = stockData[stock];
+        const prevPrice = prices[prices.length - 1];
+        const newPrice = getRandomPrice(prevPrice);
+        prices.push(newPrice);
+        if (prices.length > maxDataLength) prices.shift();
+      });
+
+      data.labels.push((currentIndex++).toString());
+      if (data.labels.length > maxDataLength) data.labels.shift();
+
+      data.datasets[0].data = stockData[currentStock];
+      chart.update();
+      updateInfo();
+    }, 1000);
+
+    function updateInfo() {
+      document.getElementById("cash").innerText = Math.floor(userHoldings.cash).toLocaleString();
+      document.getElementById("shares").innerText = userHoldings.shares[currentStock];
+
+      const shares = userHoldings.shares[currentStock];
+      const avgBuy = userHoldings.avgBuyPrice[currentStock];
+      const current = getCurrentPrice();
+
+      // 현재 주가 표시 업데이트
+      document.getElementById('currentPrice').innerText = current.toLocaleString();
+
+      const profitEl = document.getElementById("profit");
+
+      if (shares > 0 && avgBuy !== null) {
+        const totalBuy = avgBuy * shares;
+        const totalNow = current * shares;
+        const diff = totalNow - totalBuy;
+        const rate = ((diff / totalBuy) * 100).toFixed(2);
+
+        profitEl.innerText = `${diff >= 0 ? '+' : ''}${diff.toLocaleString()}원 (${rate}%)`;
+        profitEl.style.color = diff >= 0 ? 'green' : 'red';
+      } else {
+        profitEl.innerText = '0원 (0%)';
+        profitEl.style.color = 'black';
+      }
+    }
+
+    function logTrade(type, price, quantity, profit, rate) {
+      const table = document.getElementById("tradeLog").querySelector("tbody");
+      const row = document.createElement("tr");
+      const time = new Date().toLocaleTimeString();
+
+      const cells = [
+        time,
+        currentStock,
+        type,
+        price.toLocaleString(),
+        quantity,
+        (price * quantity).toLocaleString(),
+        profit === 0 ? '-' : profit.toLocaleString(),
+        rate === "0%" ? '-' : rate
+      ];
+
+      cells.forEach(text => {
+        const td = document.createElement("td");
+        td.innerText = text;
+        row.appendChild(td);
+      });
+
+      table.prepend(row);
+    }
+
+    selectStock(currentStock);
+  </script>
+</body>
+</html>
